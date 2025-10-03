@@ -26,8 +26,15 @@ def format_duration(seconds: float) -> str:
 
 
 def build_table(stats_map: dict[str, ServerStats]) -> Table:
+    is_any_host_down = any(st.consecutive_failures > 0 for st in stats_map.values())
+
+    if is_any_host_down:
+        status_title = "[bold red]OFFLINE[/bold red]"
+    else:
+        status_title = "[bold green]ONLINE[/bold green]"
+
     table = Table(
-        title="Connection Monitor",
+        title=f"{status_title} - Connection Monitor",
         box=box.MINIMAL_DOUBLE_HEAD,
         expand=True,
         caption_style="bold",
