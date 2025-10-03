@@ -29,11 +29,17 @@ class ServerStats:
     uptime_start_time: Optional[float] = (
         None  # start of current uninterrupted success streak
     )
+    longest_uptime_streak: float = 0.0
+    longest_uptime_streak_ts: Optional[float] = None  # Timestamp of when it ended
+    longest_outage_duration: float = 0.0
+    longest_outage_ts: Optional[float] = None  # Timestamp of when it ended
+    new_longest_uptime_recorded: bool = False
 
     def record_result(
         self, ok: bool, rtt_ms: Optional[float], error: Optional[str]
     ):
         now = time.time()
+        self.new_longest_uptime_recorded = False
         if ok:
             self.success_count += 1
             self.consecutive_failures = 0
@@ -50,6 +56,13 @@ class ServerStats:
                 # Closing outage handled externally (after calling record_result) to log.
                 pass
         else:
+            if self.uptime_start_time is not None:
+                # An uptime streak just ended
+                ended_streak_duration = time.time() - self.uptime_start_time
+                if ended_streak_duration > self.longest_uptime_streak:
+                    self.longest_uptime_streak = ended_streak_duration
+                    self.longest_uptime_streak_ts = time.time()
+                    self.new_longest_uptime_recorded = True
             self.failure_count += 1
             self.consecutive_failures += 1
             self.last_rtt_ms = None

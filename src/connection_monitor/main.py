@@ -30,7 +30,7 @@ async def ping_loop(host: str, stats: ServerStats, stop_event: asyncio.Event):
         )
 
 
-async def manage_outages(
+async def manage_stats(
     stats_map: Dict[str, ServerStats],
     outage_logger: OutageLogger,
     stop_event: asyncio.Event,
@@ -41,6 +41,11 @@ async def manage_outages(
                 outage_logger.maybe_open_outage(s)
             if s.outage_open and s.consecutive_failures == 0:
                 outage_logger.maybe_close_outage(s)
+            if s.new_longest_uptime_recorded:
+                outage_logger.log_longest_uptime(
+                    s.host, s.longest_uptime_streak, s.longest_uptime_streak_ts
+                )
+
         await asyncio.sleep(0.2)
 
 
@@ -82,9 +87,7 @@ async def main_async():
     ]
     tasks.append(asyncio.create_task(ui_loop(stats_map, stop_event)))
     tasks.append(
-        asyncio.create_task(
-            manage_outages(stats_map, outage_logger, stop_event)
-        )
+        asyncio.create_task(manage_stats(stats_map, outage_logger, stop_event))
     )
 
     await stop_event.wait()
