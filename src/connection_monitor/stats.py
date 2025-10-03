@@ -16,14 +16,20 @@ class ServerStats:
     consecutive_failures: int = 0
     last_rtt_ms: Optional[float] = None
     last_error: Optional[str] = None
-    window_results: Deque[bool] = field(default_factory=lambda: deque(maxlen=config.ROLLING_WINDOW))
+    window_results: Deque[bool] = field(
+        default_factory=lambda: deque(maxlen=config.ROLLING_WINDOW)
+    )
     outage_open: bool = False
-    outage_start_ts: float | None = None
+    outage_start_ts: Optional[float] = None
     outage_missed: int = 0
-    first_success_time: float | None = None  # when we first got success (for uptime streak)
-    last_success_time: float | None = None
+    first_success_time: Optional[float] = (
+        None  # when we first got success (for uptime streak)
+    )
+    last_success_time: Optional[float] = None
 
-    def record_result(self, ok: bool, rtt_ms: Optional[float], error: Optional[str]):
+    def record_result(
+        self, ok: bool, rtt_ms: Optional[float], error: Optional[str]
+    ):
         now = time.time()
         if ok:
             self.success_count += 1
@@ -64,7 +70,5 @@ class ServerStats:
         if self.consecutive_failures > 0:
             return 0.0
         if self.last_success_time is None:
-            return 0.0
-        return time.time() - self.last_success_time
             return 0.0
         return time.time() - self.last_success_time

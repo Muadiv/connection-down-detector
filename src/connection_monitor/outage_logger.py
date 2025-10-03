@@ -61,7 +61,3 @@ class OutageLogger:
                 self.log_outage(
                     s.host, s.outage_start_ts or now, now, s.outage_missed
                 )
-                # log truncated outage on shutdown
-                self.log_outage(
-                    s.host, s.outage_start_ts or now, now, s.outage_missed
-                )

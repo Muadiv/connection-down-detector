@@ -58,5 +58,3 @@ def test_packet_loss_and_uptime():
     # after success streak, consecutive failures should be 0
     assert st.consecutive_failures == 0
     assert st.current_uptime_streak() >= 0
-    assert st.consecutive_failures == 0
-    assert st.current_uptime_streak() >= 0

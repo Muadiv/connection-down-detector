@@ -76,5 +76,3 @@ class LiveUI:
             while True:
                 live.update(build_table(self.stats_map))
                 time.sleep(config.UI_REFRESH_INTERVAL)
-                live.update(build_table(self.stats_map))
-                time.sleep(config.UI_REFRESH_INTERVAL)

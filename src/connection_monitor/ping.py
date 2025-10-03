@@ -62,4 +62,3 @@ async def ping_host(host: str, timeout: float) -> PingResult:
         # Non-zero exit; attempt to categorize
         err: str = "timeout" if "100% packet loss" in stdout else "unreachable"
         return PingResult(host, False, None, err)
-        return PingResult(host, False, None, err)
