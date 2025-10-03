@@ -70,11 +70,17 @@ def build_table(
         )
 
     longest_uptime_str = "-"
-    if global_stats.longest_uptime_ts:
-        longest_uptime_str = (
+    current_uptime = global_stats.get_current_uptime()
+    if global_stats.longest_uptime > 0:
+        if current_uptime > global_stats.longest_uptime:
+            longest_uptime_str = f"{format_duration(current_uptime)} (current)"
+        else:
+            longest_uptime_str = (
             f"{format_duration(global_stats.longest_uptime)} (ended on "
             f"{datetime.fromtimestamp(global_stats.longest_uptime_ts).strftime(config.LOG_TIME_FORMAT)})"
         )
+    elif current_uptime > 0:
+        longest_uptime_str = f"{format_duration(current_uptime)} (current)"
 
     longest_outage_str = "-"
     if global_stats.longest_outage_ts:

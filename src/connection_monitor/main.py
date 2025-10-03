@@ -86,7 +86,7 @@ async def ui_loop(
         build_table(stats_map, global_stats),
         refresh_per_second=int(1 / config.UI_REFRESH_INTERVAL),
         console=console,
-        screen=False,
+        screen=True,
     ) as live:
         while not stop_event.is_set():
             live.update(build_table(stats_map, global_stats))
