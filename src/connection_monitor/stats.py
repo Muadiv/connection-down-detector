@@ -26,6 +26,9 @@ class ServerStats:
         None  # when we first got success (for uptime streak)
     )
     last_success_time: Optional[float] = None
+    uptime_start_time: Optional[float] = (
+        None  # start of current uninterrupted success streak
+    )
 
     def record_result(
         self, ok: bool, rtt_ms: Optional[float], error: Optional[str]
@@ -39,6 +42,9 @@ class ServerStats:
             self.window_results.append(True)
             if self.first_success_time is None:
                 self.first_success_time = now
+            # Initialize or keep existing uptime streak start
+            if self.uptime_start_time is None:
+                self.uptime_start_time = now
             self.last_success_time = now
             if self.outage_open:
                 # Closing outage handled externally (after calling record_result) to log.
@@ -49,6 +55,8 @@ class ServerStats:
             self.last_rtt_ms = None
             self.last_error = error or "fail"
             self.window_results.append(False)
+            # Reset uptime streak start on failure
+            self.uptime_start_time = None
 
     def packet_loss_pct(self) -> float:
         if not self.window_results:
@@ -66,9 +74,9 @@ class ServerStats:
         return config.EMOJI_RED
 
     def current_uptime_streak(self) -> float:
-        """Seconds since last failure if no outage open; resets on failure."""
+        """Seconds of continuous success since last failure. 0 if currently failing or no success yet."""
         if self.consecutive_failures > 0:
             return 0.0
-        if self.last_success_time is None:
+        if self.uptime_start_time is None:
             return 0.0
-        return time.time() - self.last_success_time
+        return time.time() - self.uptime_start_time
