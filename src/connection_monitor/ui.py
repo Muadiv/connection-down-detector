@@ -1,17 +1,13 @@
 from __future__ import annotations
 
-import time
 from datetime import datetime
 
 from rich import box
 from rich.console import Console
-from rich.live import Live
 from rich.table import Table
 
 from . import config
-from .stats import ServerStats
-
-console = Console()
+from .stats import GlobalStats, ServerStats
 
 
 def format_duration(seconds: float) -> str:
@@ -25,16 +21,18 @@ def format_duration(seconds: float) -> str:
         return f"{seconds / 86400:.1f}d"
 
 
-def build_table(stats_map: dict[str, ServerStats]) -> Table:
-    is_any_host_down = any(st.consecutive_failures > 0 for st in stats_map.values())
+def build_table(
+    stats_map: dict[str, ServerStats], global_stats: GlobalStats
+) -> Table:
+    is_all_hosts_down = all(st.consecutive_failures > 0 for st in stats_map.values())
 
-    if is_any_host_down:
-        status_title = "[bold red]OFFLINE[/bold red]"
+    if is_all_hosts_down:
+        status_title = f"[bold red]OFFLINE[/bold red] - Outage for {format_duration(global_stats.get_current_outage_duration())}"
     else:
-        status_title = "[bold green]ONLINE[/bold green]"
+        status_title = f"[bold green]ONLINE[/bold green] - Uptime for {format_duration(global_stats.get_current_uptime())}"
 
     table = Table(
-        title=f"{status_title} - Connection Monitor",
+        title=f"{status_title}",
         box=box.MINIMAL_DOUBLE_HEAD,
         expand=True,
         caption_style="bold",
@@ -47,15 +45,6 @@ def build_table(stats_map: dict[str, ServerStats]) -> Table:
     table.add_column("Fail")
     table.add_column("Consec Fail")
     table.add_column("Packet Loss %")
-    table.add_column("Uptime Streak")
-
-    longest_uptime_host = "-"
-    longest_uptime_str = "-"
-    longest_outage_host = "-"
-    longest_outage_str = "-"
-
-    max_uptime = 0.0
-    max_outage = 0.0
 
     for host, st in stats_map.items():
         if st.last_rtt_ms is not None:
@@ -68,16 +57,7 @@ def build_table(stats_map: dict[str, ServerStats]) -> Table:
             if st.consecutive_failures == 0
             else f"DOWN ({st.consecutive_failures})"
         )
-        if st.outage_open:
-            status_text = (
-                "OUTAGE"
-                if st.consecutive_failures
-                >= config.CONSECUTIVE_FAILURES_FOR_OUTAGE
-                else status_text
-            )
-        loss = st.packet_loss_pct()
-        uptime = st.current_uptime_streak()
-        uptime_str = format_duration(uptime) if uptime >= 1 else "-"
+
         table.add_row(
             host,
             status_text,
@@ -86,28 +66,26 @@ def build_table(stats_map: dict[str, ServerStats]) -> Table:
             str(st.success_count),
             str(st.failure_count),
             str(st.consecutive_failures),
-            f"{loss:.0f}",
-            uptime_str,
+            f"{st.packet_loss_pct():.0f}",
         )
-        if st.longest_uptime_streak > max_uptime:
-            max_uptime = st.longest_uptime_streak
-            longest_uptime_host = host
-            longest_uptime_str = (
-                f"{format_duration(st.longest_uptime_streak)} (ended on "
-                f"{datetime.fromtimestamp(st.longest_uptime_streak_ts).strftime(config.LOG_TIME_FORMAT)})"
-            )
 
-        if st.longest_outage_duration > max_outage:
-            max_outage = st.longest_outage_duration
-            longest_outage_host = host
-            longest_outage_str = (
-                f"{format_duration(st.longest_outage_duration)} (ended on "
-                f"{datetime.fromtimestamp(st.longest_outage_ts).strftime(config.LOG_TIME_FORMAT)})"
-            )
+    longest_uptime_str = "-"
+    if global_stats.longest_uptime_ts:
+        longest_uptime_str = (
+            f"{format_duration(global_stats.longest_uptime)} (ended on "
+            f"{datetime.fromtimestamp(global_stats.longest_uptime_ts).strftime(config.LOG_TIME_FORMAT)})"
+        )
+
+    longest_outage_str = "-"
+    if global_stats.longest_outage_ts:
+        longest_outage_str = (
+            f"{format_duration(global_stats.longest_outage)} (ended on "
+            f"{datetime.fromtimestamp(global_stats.longest_outage_ts).strftime(config.LOG_TIME_FORMAT)})"
+        )
 
     table.caption = (
-        f"Longest Uptime: {longest_uptime_str} (host: {longest_uptime_host})\n"
-        f"Longest Outage: {longest_outage_str} (host: {longest_outage_host})"
+        f"Longest Uptime: {longest_uptime_str}\n"
+        f"Longest Outage: {longest_outage_str}"
     )
 
     return table

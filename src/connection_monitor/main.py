@@ -13,61 +13,93 @@ from rich.live import Live
 from . import config
 from .outage_logger import OutageLogger
 from .ping import ping_host
-from .stats import ServerStats
+from .stats import GlobalStats, ServerStats
 from .ui import build_table
 
 console = Console()
 
 
 async def ping_loop(host: str, stats: ServerStats, stop_event: asyncio.Event):
+    """Continuously pings a single host and records the results."""
     while not stop_event.is_set():
         start = time.time()
         res = await ping_host(host, config.PING_TIMEOUT_SECONDS)
         stats.record_result(res.ok, res.rtt_ms, res.error)
-        # Outage tracking handled externally
         await asyncio.sleep(
             max(0, config.PING_INTERVAL_SECONDS - (time.time() - start))
         )
 
 
-async def manage_stats(
+async def stats_aggregator(
     stats_map: Dict[str, ServerStats],
+    global_stats: GlobalStats,
     outage_logger: OutageLogger,
     stop_event: asyncio.Event,
 ):
+    """Monitors all servers and updates the global connection state."""
     while not stop_event.is_set():
-        for s in stats_map.values():
-            if s.consecutive_failures >= config.CONSECUTIVE_FAILURES_FOR_OUTAGE:
-                outage_logger.maybe_open_outage(s)
-            if s.outage_open and s.consecutive_failures == 0:
-                outage_logger.maybe_close_outage(s)
-            if s.new_longest_uptime_recorded:
-                outage_logger.log_longest_uptime(
-                    s.host, s.longest_uptime_streak, s.longest_uptime_streak_ts
-                )
+        now = time.time()
+        all_hosts_down = all(s.consecutive_failures > 0 for s in stats_map.values())
 
-        await asyncio.sleep(0.2)
+        # Uptime tracking
+        if all_hosts_down:
+            # End of an uptime streak
+            if global_stats.uptime_start_ts is not None:
+                duration = now - global_stats.uptime_start_ts
+                if duration > global_stats.longest_uptime:
+                    global_stats.longest_uptime = duration
+                    global_stats.longest_uptime_ts = now
+                    outage_logger.log_longest_uptime(duration, now)
+                global_stats.uptime_start_ts = None
+        else:
+            # Start of a new uptime streak
+            if global_stats.uptime_start_ts is None:
+                global_stats.uptime_start_ts = now
+
+        # Outage tracking
+        if all_hosts_down:
+            # Start of a new outage
+            if global_stats.outage_start_ts is None:
+                global_stats.outage_start_ts = now
+                outage_logger.log_outage_start(now)
+        else:
+            # End of an outage
+            if global_stats.outage_start_ts is not None:
+                duration = now - global_stats.outage_start_ts
+                outage_logger.log_outage_end(global_stats.outage_start_ts, now)
+                if duration > global_stats.longest_outage:
+                    global_stats.longest_outage = duration
+                    global_stats.longest_outage_ts = now
+                    outage_logger.log_longest_outage(duration, now)
+                global_stats.outage_start_ts = None
+
+        await asyncio.sleep(0.1)  # High-frequency check
 
 
-async def ui_loop(stats_map: Dict[str, ServerStats], stop_event: asyncio.Event):
-    from rich import box
-
+async def ui_loop(
+    stats_map: Dict[str, ServerStats],
+    global_stats: GlobalStats,
+    stop_event: asyncio.Event,
+):
+    """Renders the live UI table."""
     with Live(
-        build_table(stats_map),
+        build_table(stats_map, global_stats),
         refresh_per_second=int(1 / config.UI_REFRESH_INTERVAL),
         console=console,
         screen=False,
     ) as live:
         while not stop_event.is_set():
-            live.update(build_table(stats_map))
+            live.update(build_table(stats_map, global_stats))
             await asyncio.sleep(config.UI_REFRESH_INTERVAL)
 
 
 async def main_async():
+    """The main asynchronous entry point of the application."""
     stop_event = asyncio.Event()
     stats_map: Dict[str, ServerStats] = {
         h: ServerStats(h) for h in config.SERVERS
     }
+    global_stats = GlobalStats()
     outage_logger = OutageLogger(config.LOG_FILE)
 
     loop = asyncio.get_running_loop()
@@ -81,25 +113,31 @@ async def main_async():
         except NotImplementedError:  # Windows
             signal.signal(sig, lambda s, f: _signal_handler())
 
+    # Start all background tasks
     tasks = [
-        asyncio.create_task(ping_loop(host, stats_map[host], stop_event))
-        for host in config.SERVERS
+        asyncio.create_task(ping_loop(host, stats, stop_event))
+        for host, stats in stats_map.items()
     ]
-    tasks.append(asyncio.create_task(ui_loop(stats_map, stop_event)))
     tasks.append(
-        asyncio.create_task(manage_stats(stats_map, outage_logger, stop_event))
+        asyncio.create_task(ui_loop(stats_map, global_stats, stop_event))
+    )
+    tasks.append(
+        asyncio.create_task(
+            stats_aggregator(stats_map, global_stats, outage_logger, stop_event)
+        )
     )
 
     await stop_event.wait()
-    # Cancel tasks except ourselves
+
+    # Graceful shutdown
     for t in tasks:
         t.cancel()
-    for t in tasks:
-        with contextlib.suppress(asyncio.CancelledError):
-            await t
+    await asyncio.gather(*tasks, return_exceptions=True)
 
-    # Finalize outages
-    outage_logger.finalize(stats_map.values())
+    # Final log entry for any ongoing outage
+    if global_stats.outage_start_ts is not None:
+        now = time.time()
+        outage_logger.log_outage_end(global_stats.outage_start_ts, now)
 
     # Print summary
     console.print("\nSummary:")
