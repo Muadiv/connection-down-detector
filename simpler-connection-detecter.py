@@ -13,10 +13,18 @@ from collections import deque
 import signal
 import sys
 
+# Import weather module
+try:
+    from weather_display import show_weather_screen
+    WEATHER_AVAILABLE = True
+except ImportError:
+    WEATHER_AVAILABLE = False
+    print("⚠️ weather_display.py no encontrado - función de clima deshabilitada")
+
 # Configuration
 SERVERS = [
     "8.8.8.8",      # Google DNS
-    "1.1.1.1",      # Cloudflare DNS
+   "1.1.1.1",      # Cloudflare DNS
     "208.67.222.222", # OpenDNS
 ]
 PING_INTERVAL = 3  # seconds between pings
@@ -26,6 +34,9 @@ PACKET_LOSS_WINDOW = 20  # rolling window for packet loss calculation
 SPEEDTEST_INTERVAL = 3600  # seconds between speedtests (1 hour)
 MAX_LOG_SIZE = 1024 * 1024 * 1024  # 1GB in bytes
 MAX_LOG_AGE_DAYS = 30  # Keep logs for 30 days max
+WEATHER_INTERVAL = 60  # seconds between weather screens (1 minute)
+WEATHER_DURATION = 30  # seconds to show weather screen
+WEATHER_LOCATION = "Prague"  # Change to your location
 
 # Terminal colors and emojis
 GREEN = "\033[92m"
@@ -44,6 +55,10 @@ speedtest_data = {
     'upload': None,
     'latency': None,
     'packet_loss': None,
+}
+display_state = {
+    'showing_weather': False,
+    'last_weather_show': None,
 }
 log_file = "connection_outages.log"
 speedtest_log_file = "speedtest_history.log"
@@ -291,8 +306,32 @@ def draw_dashboard():
 async def update_display():
     """Update display periodically"""
     while running:
-        draw_dashboard()
+        if not display_state['showing_weather']:
+            draw_dashboard()
         await asyncio.sleep(1)
+
+async def weather_scheduler():
+    """Show weather screen periodically"""
+    if not WEATHER_AVAILABLE:
+        return
+    
+    # Wait a bit before first weather display
+    await asyncio.sleep(WEATHER_INTERVAL)
+    
+    while running:
+        if running:
+            # Mark that we're showing weather
+            display_state['showing_weather'] = True
+            display_state['last_weather_show'] = datetime.now()
+            
+            # Show weather screen
+            await show_weather_screen(WEATHER_DURATION, WEATHER_LOCATION)
+            
+            # Back to normal display
+            display_state['showing_weather'] = False
+            
+            # Wait until next weather display
+            await asyncio.sleep(WEATHER_INTERVAL - WEATHER_DURATION)
 
 def print_summary():
     """Print final summary on exit"""
@@ -319,6 +358,11 @@ def print_summary():
 def signal_handler(sig, frame):
     """Handle Ctrl+C gracefully"""
     global running
+    if not running:
+        # If already shutting down, force exit
+        print(f"\n{RED}Force exit...{RESET}")
+        sys.exit(0)
+    
     running = False
     print(f"\n{YELLOW}Shutting down gracefully...{RESET}")
 
@@ -354,17 +398,29 @@ async def main():
     # Start display update task
     tasks.append(asyncio.create_task(update_display()))
     
-    # Wait for all tasks
+    # Start weather scheduler
+    if WEATHER_AVAILABLE:
+        tasks.append(asyncio.create_task(weather_scheduler()))
+    
+    # Wait for shutdown signal
     try:
-        await asyncio.gather(*tasks)
-    except asyncio.CancelledError:
+        while running:
+            await asyncio.sleep(0.1)
+    except KeyboardInterrupt:
+        running = False
+    
+    # Cancel all tasks
+    for task in tasks:
+        task.cancel()
+    
+    # Wait for tasks to complete cancellation
+    try:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    except Exception:
         pass
     
     # Print summary
     print_summary()
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        pass
+    asyncio.run(main())
